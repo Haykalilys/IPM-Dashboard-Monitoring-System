@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="id" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Indomprima Dashboard Monitoring System</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    :root{--bg:#0b1220;--card:#111a2b;--fg:#d7e3ff;--muted:#8ea2c6;--accent:#4ea1ff;}
+    body{background:var(--bg); color:var(--fg);}
+    .card{background:var(--card); border:none; border-radius:16px;}
+    .card h5{color:var(--fg);}
+    .muted{color:var(--muted);}
+    .big-num{font-size:2.2rem; font-weight:700;}
+    .chart{height:300px;}
+    .header-title{font-size:2rem; font-weight:700;}
+    .footer{color:var(--muted); font-size:.9rem;}
+    .table thead th{color:var(--muted);}
+    .table{color:var(--fg);}
+    .btn-primary{background:var(--accent); border:none;}
+  </style>
+</head>
+<body>
+<div class="container-fluid p-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="header-title">Dashboard Monitoring</div>
+    <div class="d-flex gap-2">
+      <form id="uploadForm" class="d-flex gap-2" enctype="multipart/form-data">
+        <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx,.xls" required>
+        <button class="btn btn-primary btn-sm" type="submit">Upload</button>
+      </form>
+      <div class="muted" id="clock"></div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-2">
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center">
+          <h5>Total Masuk</h5>
+          <span class="muted">barang</span>
+        </div>
+        <div class="big-num" id="kpiMasuk">0</div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center">
+          <h5>Total Keluar</h5>
+          <span class="muted">barang</span>
+        </div>
+        <div class="big-num" id="kpiKeluar">0</div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center">
+          <h5>Total Stock</h5>
+        </div>
+        <div class="big-num" id="kpiStock">0</div>
+        <div class="muted" id="lastUpdate">-</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card p-3">
+        <h5>Tren Harian Masuk vs Keluar</h5>
+        <div id="lineChart" class="chart"></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <h5>Persentase Kategori (Keluar)</h5>
+        <div id="pieKeluar" class="chart"></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card p-3">
+        <h5>Penjualan per Barang (Keluar)</h5>
+        <div id="barKeluar" class="chart"></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card p-3">
+        <h5>Stock per Barang (Current)</h5>
+        <div id="barStock" class="chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card p-3">
+        <h5>Transaksi Terbaru</h5>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Kategori</th>
+                <th>Barang</th>
+                <th class="text-end">Masuk</th>
+                <th class="text-end">Keluar</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyTransaksi"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer mt-3">Format Excel wajib memiliki kolom: <code>Tanggal, Kategori, Barang, Masuk, Keluar</code>. Kategori hanya <b>Electrical</b> dan <b>Lighting</b>.</div>
+</div>
+
+<script>
+  setInterval(() => {
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toLocaleString();
+  }, 1000);
+
+  const lineChart = echarts.init(document.getElementById('lineChart'));
+  const pieKeluar = echarts.init(document.getElementById('pieKeluar'));
+  const barKeluar = echarts.init(document.getElementById('barKeluar'));
+  const barStock  = echarts.init(document.getElementById('barStock'));
+
+  function fmt(x){ return (x||0).toLocaleString('id-ID'); }
+
+  function render(payload){
+    document.getElementById('kpiMasuk').textContent  = fmt(payload.summary.totalMasuk);
+    document.getElementById('kpiKeluar').textContent = fmt(payload.summary.totalKeluar);
+    document.getElementById('kpiStock').textContent  = fmt(payload.summary.totalStock);
+    document.getElementById('lastUpdate').textContent = 'Update: ' + (payload.summary.lastUpdate || '-');
+
+    const dates = payload.dailySeries.map(d => d.date);
+    const masuk = payload.dailySeries.map(d => d.masuk);
+    const keluar = payload.dailySeries.map(d => d.keluar);
+    lineChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      legend: { data:['Masuk','Keluar'], textStyle:{color:'#d7e3ff'} },
+      xAxis: { type:'category', data: dates, axisLine:{lineStyle:{color:'#8ea2c6'}}, axisLabel:{color:'#d7e3ff'} },
+      yAxis: { type:'value', axisLine:{lineStyle:{color:'#8ea2c6'}}, splitLine:{lineStyle:{color:'#1f2b44'}}, axisLabel:{color:'#d7e3ff'} },
+      series: [
+        { name:'Masuk', type:'line', smooth:true, areaStyle:{} , data: masuk },
+        { name:'Keluar', type:'line', smooth:true, areaStyle:{} , data: keluar }
+      ]
+    });
+
+    pieKeluar.setOption({
+      backgroundColor:'transparent',
+      tooltip: { trigger: 'item' },
+      legend: { top: 'bottom', textStyle:{color:'#d7e3ff'} },
+      series: [{
+        name:'Keluar',
+        type:'pie',
+        radius:['40%','70%'],
+        avoidLabelOverlap:false,
+        itemStyle:{ borderRadius:8, borderColor:'#0b1220', borderWidth:2 },
+        label:{ show:true, formatter: '{b}: {d}%' },
+        data: payload.categoryKeluar
+      }]
+    });
+
+    barKeluar.setOption({
+      backgroundColor:'transparent',
+      tooltip: { trigger: 'axis' },
+      xAxis: { type:'category', data: payload.keluarByItem.map(x=>x.name), axisLabel:{color:'#d7e3ff', rotate:30} , axisLine:{lineStyle:{color:'#8ea2c6'}} },
+      yAxis: { type:'value', axisLabel:{color:'#d7e3ff'}, splitLine:{lineStyle:{color:'#1f2b44'}} },
+      series: [ { type:'bar', data: payload.keluarByItem.map(x=>x.value), barMaxWidth:28 } ]
+    });
+
+    barStock.setOption({
+      backgroundColor:'transparent',
+      tooltip: { trigger: 'axis' },
+      xAxis: { type:'category', data: payload.stockByItem.map(x=>x.name), axisLabel:{color:'#d7e3ff', rotate:30}, axisLine:{lineStyle:{color:'#8ea2c6'}} },
+      yAxis: { type:'value', axisLabel:{color:'#d7e3ff'}, splitLine:{lineStyle:{color:'#1f2b44'}} },
+      series: [ { type:'bar', data: payload.stockByItem.map(x=>x.value), barMaxWidth:28 } ]
+    });
+
+    const tbody = document.getElementById('tbodyTransaksi');
+    tbody.innerHTML = '';
+    payload.table.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.tanggal}</td>
+        <td>${r.kategori}</td>
+        <td>${r.barang}</td>
+        <td class="text-end">${fmt(r.masuk)}</td>
+        <td class="text-end">${fmt(r.keluar)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  const initialPayload = {{ initial_json|tojson }};
+  render(initialPayload);
+
+  const socket = io();
+  socket.on('update_data', (payload) => { render(payload); });
+
+  document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const res = await fetch('/upload', { method:'POST', body: fd });
+    const txt = await res.text();
+    if (!res.ok) alert(txt);
+  });
+
+  window.addEventListener('resize', () => {
+    lineChart.resize(); pieKeluar.resize(); barKeluar.resize(); barStock.resize();
+  });
+</script>
+</body>
+</html>
